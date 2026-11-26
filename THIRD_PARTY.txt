@@ -1,0 +1,18 @@
+Bundled third-party components
+
+Tesseract.js 7.0.0 and Tesseract.js-core 7.0.0
+Apache License 2.0
+https://github.com/naptha/tesseract.js
+https://github.com/naptha/tesseract.js-core
+
+pdf-lib 1.17.1
+MIT License
+https://github.com/Hopding/pdf-lib
+
+OCR models compatible with Tesseract 4/5
+rus.traineddata from tesseract-ocr/tessdata_best, Apache License 2.0
+eng.traineddata from Debian's tesseract-ocr-eng package, Apache License 2.0
+https://github.com/tesseract-ocr/tessdata_best
+https://packages.debian.org/tesseract-ocr-eng
+
+See the license texts in licenses/.

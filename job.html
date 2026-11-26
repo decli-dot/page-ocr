@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Экспорт документа · Page OCR</title>
+  <link rel="icon" href="icons/icon-32.png">
+  <link rel="stylesheet" href="ui.css">
+  <link rel="stylesheet" href="job.css">
+</head>
+<body class="job">
+  <main class="workspace" id="workspace" data-phase="capture">
+    <header class="topbar">
+      <div class="brand"><img src="icons/icon-48.png" width="42" height="42" alt=""><span>Page OCR</span></div>
+      <button class="button subtle" type="button" id="return" hidden>К документу</button>
+    </header>
+
+    <section class="document-hero surface" aria-labelledby="designation">
+      <div class="document-info">
+        <h1 id="designation">Экспорт документа</h1>
+        <p class="document-name" id="document-name" hidden></p>
+        <ul class="metadata" id="metadata" hidden>
+          <li id="pages"></li>
+          <li>OCR на русском и английском</li>
+        </ul>
+      </div>
+      <div class="paper-mark" aria-hidden="true">
+        <div class="paper-back"></div>
+        <div class="paper-front"><i></i><i></i><i></i><i></i></div>
+      </div>
+    </section>
+
+    <ol class="stages" aria-label="Этапы экспорта">
+      <li class="stage surface" id="stage-capture" data-state="active">
+        <span class="stage-mark" aria-hidden="true"></span>
+        <div><h2>Загрузка листов</h2><p id="stage-capture-label">Подключение</p></div>
+        <span class="stage-status" aria-hidden="true"></span>
+      </li>
+      <li class="stage surface" id="stage-ocr" data-state="waiting">
+        <span class="stage-mark" aria-hidden="true"></span>
+        <div><h2>Распознавание</h2><p id="stage-ocr-label">Ожидает</p></div>
+        <span class="stage-status" aria-hidden="true"></span>
+      </li>
+      <li class="stage surface" id="stage-download" data-state="waiting">
+        <span class="stage-mark" aria-hidden="true"></span>
+        <div><h2>Сохранение</h2><p id="stage-download-label">Ожидает</p></div>
+        <span class="stage-status" aria-hidden="true"></span>
+      </li>
+    </ol>
+
+    <section class="execution surface" aria-labelledby="execution-title">
+      <div class="execution-header">
+        <h2 id="execution-title">Ход выполнения</h2>
+        <span class="timer" id="elapsed" aria-label="Прошло времени">00:00</span>
+      </div>
+      <p class="status" id="status" role="status">Подключаюсь к открытому документу…</p>
+      <div class="bar-area" id="bar-area">
+        <progress id="progress" aria-label="Собранные страницы"></progress>
+        <span class="counter" id="counter"></span>
+      </div>
+      <p class="hint" id="hint" hidden></p>
+      <div class="execution-actions">
+        <button class="button subtle" id="cancel" type="button">Отменить</button>
+        <button class="button subtle" id="close" type="button" hidden>Закрыть вкладку</button>
+      </div>
+    </section>
+
+    <section class="result surface" id="result" aria-labelledby="result-filename" hidden>
+      <span class="file-icon" aria-hidden="true">PDF</span>
+      <div class="file-info">
+        <h2 id="result-filename"></h2>
+        <p id="result-meta" class="hint"></p>
+      </div>
+      <button class="button primary" id="show-file" type="button">Показать в папке</button>
+    </section>
+  </main>
+  <script src="ui.js"></script>
+  <script src="job-ui.js"></script>
+  <script src="vendor/tesseract.min.js"></script>
+  <script src="vendor/pdf-lib.min.js"></script>
+  <script src="job.js"></script>
+</body>
+</html>
