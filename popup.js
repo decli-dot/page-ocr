@@ -7,7 +7,7 @@ let sourceTabId;
 let book;
 
 async function send(command, fields = {}) {
-  const response = await chrome.runtime.sendMessage({ channel: "gost-ocr", command, tabId: sourceTabId, ...fields });
+  const response = await chrome.runtime.sendMessage({ channel: "page-ocr", command, tabId: sourceTabId, ...fields });
   if (!response?.ok) throw new Error(response?.error || "Расширение не получило ответ от вкладки.");
   return response;
 }
@@ -20,7 +20,7 @@ function showError(error) {
 async function loadCard() {
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tab?.id) throw new Error("Открой вкладку со стандартом.");
+    if (!tab?.id) throw new Error("Открой вкладку с документом на Doc88.");
     sourceTabId = tab.id;
     book = await send("inspect");
     showDocument(book);

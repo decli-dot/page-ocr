@@ -90,7 +90,7 @@ const jobView = (() => {
       returnButton.hidden = phase !== "capture";
       hint.textContent = {
         capture: "Оставь вкладку документа открытой, пока загружаются листы.",
-        ocr: "Страницы собраны. Вкладку стандарта можно закрыть. Распознавание идёт на этом компьютере.",
+        ocr: "Страницы собраны. Вкладку Doc88 можно закрыть. Распознавание идёт на этом компьютере.",
         download: "Готовый PDF сохраняется в загрузки браузера.",
       }[phase];
       hint.hidden = false;
@@ -122,9 +122,15 @@ const jobView = (() => {
       cancel.hidden = true;
       get("close").hidden = false;
       if (file) {
-        const size = new Intl.NumberFormat("ru", { maximumFractionDigits: 1 }).format(file.bytes / 1048576);
+        const large = file.bytes >= 1048576;
+        const size = new Intl.NumberFormat("ru", { maximumFractionDigits: 1 })
+          .format(file.bytes / (large ? 1048576 : 1024)) + (large ? " МБ" : " КБ");
         get("result-filename").textContent = file.name;
-        get("result-meta").textContent = formatPages(total) + " · " + size + " МБ · от " + file.minLongSide + " пикс. по длинной стороне";
+        const resolution = file.enhancedPages
+          ? `Листы обработаны: ${file.enhancedPages} из ${total}. От ${file.minSourceLongSide} пикс. в источнике, от ${file.minOutputLongSide} пикс. в PDF.`
+          : `От ${file.minOutputLongSide} пикс. по длинной стороне.`;
+        const naming = file.catalogueConfirmed ? "Название по каталогу." : "Название по заголовку Doc88.";
+        get("result-meta").textContent = `${formatPages(total)} · ${size} · ${resolution} ${naming}`;
         showFile.addEventListener("click", () => chrome.downloads.show(file.id));
         get("result").hidden = false;
       }

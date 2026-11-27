@@ -1,16 +1,10 @@
-const channel = "gost-ocr";
+const channel = "page-ocr";
 
-function viewerFiles(url) {
-  if (!url) return null;
+function isDoc88Document(url) {
+  if (!url) return false;
   const address = new URL(url);
-  if (address.origin === "https://protect.gost.ru" && address.pathname.startsWith("/gost/details/")) {
-    return ["viewer.js"];
-  }
-  if (["https://www.doc88.com", "https://doc88.com"].includes(address.origin) &&
-      /^\/p-\d+\.html$/.test(address.pathname)) {
-    return ["doc88-viewer.js", "viewer.js"];
-  }
-  return null;
+  return ["https://www.doc88.com", "https://doc88.com"].includes(address.origin) &&
+    /^\/p-\d+\.html$/.test(address.pathname);
 }
 
 function tellViewer(tabId, command, fields = {}) {
@@ -42,11 +36,13 @@ async function request(message) {
   }
 
   const tab = await chrome.tabs.get(message.tabId);
-  const files = viewerFiles(tab.url);
-  if (!files) {
-    return { ok: false, error: "Открой документ на Doc88 или вкладку «Просмотр документа» в карточке Росстандарта." };
+  if (!isDoc88Document(tab.url)) {
+    return { ok: false, error: "Открой документ на Doc88 и снова нажми значок Page OCR." };
   }
-  await chrome.scripting.executeScript({ target: { tabId: tab.id }, files });
+  await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    files: ["doc88-viewer.js", "viewer.js"],
+  });
   if (message.command === "start") return startExport(tab);
 
   const state = await tellViewer(tab.id, "inspect");
@@ -65,8 +61,41 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
   const fromPopup = sender.url === chrome.runtime.getURL("popup.html");
   const allowed = (message.command === "inspect" || message.command === "start")
     ? fromPopup
-    : message.command === "show-progress" && (fromPopup || viewerFiles(sender.url));
+    : message.command === "show-progress" && (fromPopup || isDoc88Document(sender.url));
   if (!allowed) return;
   request(message).then(reply, (error) => reply({ ok: false, error: error.message }));
   return true;
+});
+
+chrome.runtime.onConnect.addListener(port => {
+  const sender = port.sender;
+  if (port.name !== "iso-catalogue" || sender?.id !== chrome.runtime.id ||
+      !sender.url?.startsWith(chrome.runtime.getURL("job.html") + "?")) return;
+
+  let tabId;
+  let closed = false;
+  let started = false;
+  port.onDisconnect.addListener(() => {
+    closed = true;
+    if (Number.isInteger(tabId)) void chrome.tabs.remove(tabId).catch(() => {});
+  });
+  port.onMessage.addListener(async ({ query } = {}) => {
+    if (started || closed) return;
+    started = true;
+    if (typeof query !== "string" || query.length > 100 ||
+        !/^ISO(?:\/(?:IEC|TS|TR|PAS|DIS|FDIS)(?: TS)?)? \d+(?:-\d+)*$/u.test(query)) {
+      port.postMessage({ tabId: null });
+      return;
+    }
+    const url = new URL("https://www.iso.org/search.html");
+    url.searchParams.set("q", query);
+    try {
+      const tab = await chrome.tabs.create({ url: url.href, active: false, windowId: sender.tab?.windowId });
+      tabId = tab.id;
+      if (closed) await chrome.tabs.remove(tabId).catch(() => {});
+      else port.postMessage({ tabId });
+    } catch {
+      if (!closed) port.postMessage({ tabId: null });
+    }
+  });
 });

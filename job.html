@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Экспорт документа · Page OCR</title>
+  <title>Экспорт Doc88 · Page OCR</title>
   <link rel="icon" href="icons/icon-32.png">
   <link rel="stylesheet" href="ui.css">
   <link rel="stylesheet" href="job.css">
@@ -11,7 +11,7 @@
 <body class="job">
   <main class="workspace" id="workspace" data-phase="capture">
     <header class="topbar">
-      <div class="brand"><img src="icons/icon-48.png" width="42" height="42" alt=""><span>Page OCR</span></div>
+      <div class="brand"><img src="icons/icon-48.png" width="42" height="42" alt=""><span>Page OCR</span><span class="source-tag">Doc88</span></div>
       <button class="button subtle" type="button" id="return" hidden>К документу</button>
     </header>
 
@@ -23,10 +23,6 @@
           <li id="pages"></li>
           <li>OCR на русском и английском</li>
         </ul>
-      </div>
-      <div class="paper-mark" aria-hidden="true">
-        <div class="paper-back"></div>
-        <div class="paper-front"><i></i><i></i><i></i><i></i></div>
       </div>
     </section>
 
@@ -78,6 +74,8 @@
   <script src="job-ui.js"></script>
   <script src="vendor/tesseract.min.js"></script>
   <script src="vendor/pdf-lib.min.js"></script>
+  <script src="page-quality.js"></script>
+  <script src="standard-name.js"></script>
   <script src="job.js"></script>
 </body>
 </html>

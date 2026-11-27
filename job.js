@@ -1,4 +1,4 @@
-const channel = "gost-ocr";
+const channel = "page-ocr";
 const options = new URLSearchParams(location.search);
 const tabId = Number(options.get("tab"));
 const job = options.get("job");
@@ -18,6 +18,7 @@ const recognitionCorePath = simdAvailable ? "vendor/tesseract-core-simd-lstm.was
 let cancelled = false;
 let downloadLocked = false;
 let progressTabId;
+let catalogueLookup;
 
 function checkCancelled() {
   if (cancelled) throw Object.assign(new Error("Сборка остановлена."), { code: "cancelled" });
@@ -26,6 +27,7 @@ function checkCancelled() {
 function cancel() {
   if (downloadLocked) return;
   cancelled = true;
+  catalogueLookup?.abort();
   jobView.stopping();
   void viewer("stop").catch(() => {});
 }
@@ -62,49 +64,8 @@ function pngFromDataUrl(uri) {
   return new Blob([bytes], { type: "image/png" });
 }
 
-function documentPath(url) {
-  const source = new URL(url);
-  return source.origin + source.pathname;
-}
-
-async function refreshViewer(sourcePath, total) {
-  const tab = await chrome.tabs.get(tabId);
-  if (!tab.url || sourcePath !== documentPath(tab.url)) throw new Error("Вкладка с документом изменилась.");
-  let changed;
-  let timeout;
-  const ready = new Promise((resolve, reject) => {
-    changed = (id, change) => {
-      if (id === tabId && change.status === "complete") resolve();
-    };
-    chrome.tabs.onUpdated.addListener(changed);
-    timeout = setTimeout(() => reject(new Error("Портал не открыл карточку после обновления.")), 18000);
-  });
-  try {
-    await Promise.all([chrome.tabs.reload(tabId), ready]);
-  } finally {
-    chrome.tabs.onUpdated.removeListener(changed);
-    clearTimeout(timeout);
-  }
-  checkCancelled();
-  const state = await chrome.tabs.get(tabId);
-  if (!state.url || sourcePath !== documentPath(state.url)) throw new Error("Портал перенаправил вкладку при обновлении.");
-  await chrome.scripting.executeScript({ target: { tabId }, files: ["viewer.js"] });
-  await viewer("begin", { reopen: true });
-  await viewer("attach", { progressTabId });
-  const resumed = await viewer("info");
-  if (resumed.total !== total) throw new Error("Число страниц изменилось после обновления карточки.");
-}
-
-async function readPage(number, sourcePath, total) {
-  let page;
-  try {
-    page = await viewer("page", { number });
-  } catch (error) {
-    if (error.code !== "image-load") throw error;
-    await report("capture", `Повторно загружаю страницу ${number} из ${total}…`, number - 1);
-    await refreshViewer(sourcePath, total);
-    page = await viewer("page", { number });
-  }
+async function readPage(number) {
+  const page = await viewer("page", { number });
   return pngFromDataUrl(page.image);
 }
 
@@ -120,14 +81,27 @@ function recognitionSize(width, height, maxSide = 2500) {
 }
 
 async function addDocumentPage(pdf, source) {
-  const image = await pdf.embedPng(await source.arrayBuffer());
-  const size = recognitionSize(image.width, image.height);
+  const header = new DataView(await source.slice(16, 24).arrayBuffer());
+  const width = header.getUint32(0);
+  const height = header.getUint32(4);
+  const size = recognitionSize(width, height);
   const pdfWidth = size.width * 72 / recognitionDpi;
-  const page = pdf.addPage([pdfWidth, pdfWidth * image.height / image.width]);
+  const page = pdf.addPage([pdfWidth, pdfWidth * height / width]);
+  const output = pageQuality.outputSize(width, height);
+  let image;
+  if (output) {
+    const bitmap = await createImageBitmap(source);
+    try {
+      image = await pdf.embedJpg(await pageQuality.enhance(bitmap, output));
+    } finally {
+      bitmap.close();
+    }
+  } else {
+    image = await pdf.embedPng(await source.arrayBuffer());
+  }
   page.drawImage(image, { x: 0, y: 0, width: page.getWidth(), height: page.getHeight() });
-  // Compress this image now so pdf-lib can release its decoded pixels before OCR starts.
   await image.embed();
-  return { width: image.width, height: image.height };
+  return { width, height, output };
 }
 
 async function recognitionImage(source) {
@@ -200,6 +174,7 @@ async function recognizePages(images, largestRecognitionArea, onProgress) {
   if (!workers.length) throw starters[0].reason;
 
   const layers = Array(images.length);
+  let firstPageText = "";
   let next = 0;
   let completed = 0;
   let halted = false;
@@ -222,10 +197,12 @@ async function recognizePages(images, largestRecognitionArea, onProgress) {
           checkCancelled();
           if (halted) break;
           await worker.setParameters({ user_defined_dpi: String(dpi) });
-          const { data } = await worker.recognize(bytes, { pdfTextOnly: true }, { pdf: true, text: false });
+          const { data } = await worker.recognize(bytes, { pdfTextOnly: true },
+            { pdf: true, text: index === 0 });
           checkCancelled();
           if (halted) break;
           layers[index] = data.pdf;
+          if (index === 0) firstPageText = data.text || "";
           images[index] = null;
           fractions[slot] = 0;
           completed++;
@@ -238,7 +215,7 @@ async function recognizePages(images, largestRecognitionArea, onProgress) {
     }));
     const failure = results.find((result) => result.status === "rejected");
     if (failure) throw failure.reason;
-    return layers;
+    return { layers, firstPageText };
   } finally {
     await Promise.allSettled(workers.map(({ worker }) => worker.terminate()));
   }
@@ -253,6 +230,7 @@ function pdfFilename(heading) {
   const extension = ".pdf";
   const title = heading.normalize("NFC")
     .replace(/\s+/g, " ")
+    .replace(/^(ISO(?:\/[A-Z]+(?: [A-Z]+)?)? \d+(?:-\d+)*):(\d{4})\b/u, "$1-$2")
     .replace(/[<>:"/\\|?*\u0000-\u001f]+/g, "_")
     .replace(/^[. ]+/, "");
   const windows = globalThis.navigator?.platform?.startsWith("Win");
@@ -264,7 +242,7 @@ function pdfFilename(heading) {
     name += character;
   }
   name = name.replace(/[. ]+$/, "");
-  return (name || "ГОСТ") + extension;
+  return (name || "Документ Doc88") + extension;
 }
 
 function waitForDownload(id) {
@@ -298,6 +276,19 @@ async function download(bytes, filename) {
   }
 }
 
+async function officialDoc88Heading(heading, cover) {
+  catalogueLookup = new AbortController();
+  const deadline = setTimeout(() => catalogueLookup.abort(), 25000);
+  try {
+    return await pageOcrStandardName.resolveDoc88(heading, cover, catalogueLookup.signal);
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(deadline);
+    catalogueLookup = undefined;
+  }
+}
+
 async function run() {
   let book;
   let done = 0;
@@ -307,33 +298,36 @@ async function run() {
   let restoring;
   try {
     if (!Number.isInteger(tabId) || tabId < 1 || !job) throw new Error("Запусти сборку с помощью значка расширения на вкладке документа.");
-    const sourcePath = documentPath((await chrome.tabs.get(tabId)).url);
     book = await viewer("info");
     progressTabId = (await chrome.tabs.getCurrent())?.id;
     jobView.init(book, tabId);
     await viewer("attach", { progressTabId });
     const pdf = await PDFLib.PDFDocument.create();
-    pdf.setTitle(book.heading);
     pdf.setSubject("Страницы документа с поисковым слоем OCR");
     pdf.setCreator("Page OCR");
     const images = [];
-    let minLongSide = Infinity;
+    let minSourceLongSide = Infinity;
+    let minOutputLongSide = Infinity;
+    let enhancedPages = 0;
     let largestRecognitionArea = 1;
     for (let number = 1; number <= book.total; number++) {
       await report("capture", `Извлекаю страницу ${number} из ${book.total}…`, done);
-      const image = await readPage(number, sourcePath, book.total);
-      const { width, height } = await addDocumentPage(pdf, image);
-      minLongSide = Math.min(minLongSide, Math.max(width, height));
+      const image = await readPage(number);
+      const { width, height, output } = await addDocumentPage(pdf, image);
+      const sourceLongSide = Math.max(width, height);
+      minSourceLongSide = Math.min(minSourceLongSide, sourceLongSide);
+      minOutputLongSide = Math.min(minOutputLongSide, output ? Math.max(output.width, output.height) : sourceLongSide);
+      if (output) enhancedPages++;
       const recognition = recognitionSize(width, height, maxRecognitionSide);
       largestRecognitionArea = Math.max(largestRecognitionArea, recognition.width * recognition.height);
       images.push(image);
       done = number;
     }
-    restoring = viewer("restore", { number: book.current }).catch(() => {});
+    restoring = viewer("restore").catch(() => {});
     done = 0;
 
     await report("ocr", "Загружаю модели распознавания…", done);
-    const layers = await recognizePages(images, largestRecognitionArea, (text, count) => {
+    const { layers, firstPageText } = await recognizePages(images, largestRecognitionArea, (text, count) => {
       done = count;
       return report("ocr", text, done);
     });
@@ -342,12 +336,22 @@ async function run() {
       await addSearchableLayer(pdf, pdf.getPage(index), layers[index]);
       layers[index] = null;
     }
+    await report("download", "Сверяю наименование с каталогом стандартов…", done);
+    const officialHeading = await officialDoc88Heading(book.heading, firstPageText);
+    book.heading = officialHeading || book.heading;
+    checkCancelled();
+    showDocument(book);
+    pdf.setTitle(book.heading);
     await report("download", "Сохраняю готовый PDF с OCR…", done);
     const bytes = await pdf.save();
     checkCancelled();
     downloadLocked = true;
     jobView.lockDownload();
-    file = { ...await download(bytes, pdfFilename(book.heading)), minLongSide };
+    file = {
+      ...await download(bytes, pdfFilename(book.heading)),
+      minSourceLongSide, minOutputLongSide, enhancedPages,
+      catalogueConfirmed: Boolean(officialHeading),
+    };
     outcome = "complete";
     message = "PDF с поиском по тексту сохранён.";
   } catch (error) {
@@ -356,7 +360,7 @@ async function run() {
     message = stopped ? "Экспорт отменён." : `Экспорт остановлен. ${error?.message || String(error)}`;
   } finally {
     jobView.finish(outcome, message, file);
-    if (book) await (restoring || viewer("restore", { number: book.current }).catch(() => {}));
+    if (book) await (restoring || viewer("restore").catch(() => {}));
     await viewer("finish", { phase: outcome, text: message, done }).catch(() => {});
   }
 }
